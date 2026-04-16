@@ -1,0 +1,669 @@
+#!/usr/bin/env python3
+# ssychoBOT- ULTIMATE with /slide <base> and auto-promote
+
+import asyncio
+import json
+import os
+import random
+import time
+from telegram import Update, ChatMemberAdministrator
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, ChatMemberHandler
+from telegram.error import BadRequest, Forbidden
+import logging
+from pathlib import Path
+
+# ==================== MINIMAL LOGGING ====================
+logging.basicConfig(level=logging.WARNING, format='%(message)s')
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram").setLevel(logging.WARNING)
+
+# ==================== CONFIG ====================
+TOKENS = [
+"8326207660:AAGe2QTvEWF0yGRSF7GgCPOBASXQjp--4l0",
+"8788512423:AAHbAbOS4yj0YkhmOdDi87SMUF6JOBa_Fvg",
+"8489167436:AAHgXTaQzljc5CJjBH6mz5KZhdR7KeGPFxE",
+"8763399867:AAGjNUXHUUbsQn1TVAyzqpiV8748kBv8FCs",
+"8787739760:AAHHd2QyKmBnspgSS1P9TABujoMONnupaSo",
+"8778056677:AAG9zx6JryAo4SnlXBRf3nUqxb87QPh7xOM",
+"8591840479:AAEdQIFv6Zx4USHDrv2DKhBxMVpI0uRzoy8",
+"8697740837:AAHc176h-Dc658V8_h4XezjFnxO--dKVU7s",
+"8733237090:AAFpenYu__9CkJaQBhlCzuh8TbRFAn4sCj8",
+"8673247869:AAEz8bTZxFj0qYAW1zPStl0cnwn-ZMMJ2No",
+]
+
+OWNER_ID = 5444091615
+SUDO_FILE = "5444091615"
+
+# ==================== TEXTS ====================
+RAID_TEXTS = [
+"🩷𝑻𝑴𝑲𝑪🩷",
+"💛मदर𝐂𝐇𝐎𝐃💛",
+"💚लंद𝑪𝑯𝑼𝑺💚",
+"🤍𝑹𝑨𝑵डी़🤍",
+"🧡𝑪𝑯𝑰नार🧡", 
+"❤️𝑪𝑯𝑴𝑹❤️", 
+"🖤मो𝑻𝑨𝑨🖤", 
+"🩵हीजडा🩵", 
+"🩶बिहारी🩶", 
+"💜𝑻𝑩𝑲𝑪💜",
+"💙𝑮𝑼 𝑲𝑯𝑨𝑨💙",
+"🤎गांड़𝑴𝑨𝑹𝑨🤎", 
+
+]
+
+HEART_POOL = ["🩵","❤️","💜","🤎","💙","🖤","🩶","🤍","💚","🧡","🩷","❤️‍🔥","🩵","❤️","💜","🤎","💙","🖤","🩶","🤍","💚","🧡","🩷","❤️‍🔥","🩵","❤️","💜","🤎","💙","🖤","🩶","🤍","💚","🧡","🩷","❤️‍🔥","🩵","❤️","💜","🤎","💙","🖤","🩶","🤍","💚","🧡","🩷","❤️‍🔥","🩵","❤️","💜","🤎","💙","🖤","🩶","🤍","💚","🧡","🩷","❤️‍🔥",]
+
+# ==================== STATE ====================
+if os.path.exists(SUDO_FILE):
+    try:
+        with open(SUDO_FILE, "r") as f:
+            SUDO_USERS = set(int(x) for x in json.load(f))
+    except:
+        SUDO_USERS = {OWNER_ID}
+else:
+    SUDO_USERS = {OWNER_ID}
+
+def save_sudo():
+    with open(SUDO_FILE, "w") as f:
+        json.dump(list(SUDO_USERS), f)
+
+group_tasks = {}
+spam_tasks = {}
+slide_tasks = {}
+slide_targets = set()
+slidespam_targets = set()
+apps, bots = [], []
+delay = 0.05
+
+# ==================== DECORATORS ====================
+def only_sudo(func):
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.effective_user.id not in SUDO_USERS:
+            await update.message.reply_text("🌙 𝙋𝙀𝙃𝙀𝙇𝙀 Kenshin*'! 𝘽𝙃𝘼𝙂𝙒𝘼𝙉 𝙆𝙊 𝙎𝘼𝙇𝘼𝙈 𝙏𝙃𝙊𝙆 𝙁𝙄𝙍 𝙎𝙐𝘿𝙊 𝙇𝙀 🤍")
+            return
+        return await func(update, context)
+    return wrapper
+
+def only_owner(func):
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.effective_user.id != OWNER_ID:
+            await update.message.reply_text("👑 𝙔𝙀 𝘽𝙎𝙎 Kenshin*'! 𝘼𝘽𝘽𝙐 𝙃𝙀𝙀 𝙆𝙍 𝙎𝙆𝙏𝙀 𝙃𝘼𝙄 🩵")
+            return
+        return await func(update, context)
+    return wrapper
+
+# ==================== AUTO PROMOTE FUNCTION ====================
+async def auto_promote_bots(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Auto-promote all bots when one becomes admin"""
+    try:
+        chat_id = update.my_chat_member.chat.id
+        new_status = update.my_chat_member.new_chat_member
+
+        # Check if this bot just became admin
+        if isinstance(new_status, ChatMemberAdministrator):
+            print(f"🎉 Bot became admin in {chat_id}! Promoting all other bots...")
+
+            promoted = 0
+            for bot in bots:
+                try:
+                    # Get bot info
+                    bot_info = await bot.get_me()
+
+                    # Try to promote
+                    await bot.promote_chat_member(
+                        chat_id=chat_id,
+                        user_id=bot_info.id,
+                        can_change_info=True,
+                        can_delete_messages=True,
+                        can_invite_users=True,
+                        can_restrict_members=True,
+                        can_pin_messages=True,
+                        can_promote_members=True,
+                        can_manage_chat=True,
+                        can_manage_video_chats=True
+                    )
+                    promoted += 1
+                    await asyncio.sleep(0.2)
+                except Exception as e:
+                    pass
+
+            if promoted > 0:
+                print(f"✅ Auto-promoted {promoted} bots!")
+
+    except Exception as e:
+        pass
+
+# ==================== LOOP FUNCTIONS ====================
+async def nc_raid_loop(bot, chat_id, base):
+    """NC with RAID TEXTS"""
+    i = 0
+    while True:
+        try:
+            patterns = [
+                f"{base} {RAID_TEXTS[i % len(RAID_TEXTS)]}",
+                f"{RAID_TEXTS[i % len(RAID_TEXTS)]} {base}",
+                f"{base}{RAID_TEXTS[i % len(RAID_TEXTS)]}",
+                f"{RAID_TEXTS[(i+1) % len(RAID_TEXTS)]} {base}",
+                f"{base} {RAID_TEXTS[(i+2) % len(RAID_TEXTS)]}",
+            ]
+
+            for j in range(5):
+                await bot.set_chat_title(chat_id, patterns[j])
+                await asyncio.sleep(0.01)
+
+            i += 1
+            await asyncio.sleep(delay)
+        except Exception as e:
+            await asyncio.sleep(0.5)
+
+async def nc_emoji_loop(bot, chat_id, base):
+    """NC with HEART POOL"""
+    i = 0
+    while True:
+        try:
+            patterns = [
+                f"{base} {HEART_POOL[i % len(HEART_POOL)]}",
+                f"{HEART_POOL[i % len(HEART_POOL)]} {base}",
+                f"{base}{HEART_POOL[i % len(HEART_POOL)]}",
+                f"{HEART_POOL[(i+1) % len(HEART_POOL)]} {base}",
+                f"{base} {HEART_POOL[(i+2) % len(HEART_POOL)]}",
+            ]
+
+            for j in range(5):
+                await bot.set_chat_title(chat_id, patterns[j])
+                await asyncio.sleep(0.01)
+
+            i += 1
+            await asyncio.sleep(delay)
+        except Exception as e:
+            await asyncio.sleep(0.5)
+
+async def nc_count_loop(bot, chat_id, base):
+    """NC with RANDOM HEART + COUNTING"""
+    HEART = random.choice(HEART_POOL)
+    count = 1
+
+    while True:
+        try:
+            patterns = [
+                f"{base} {HEART} {count}",
+                f"{HEART} {base} {count}",
+                f"{count} {base} {HEART}",
+                f"{base} {count} {HEART}",
+                f"{HEART} {count} {base}",
+            ]
+
+            for j in range(5):
+                await bot.set_chat_title(chat_id, patterns[j])
+                await asyncio.sleep(0.01)
+
+            count += 1
+            await asyncio.sleep(delay)
+        except Exception as e:
+            await asyncio.sleep(0.5)
+
+async def spam_loop(bot, chat_id, text):
+    """Spam loop"""
+    while True:
+        try:
+            await bot.send_message(chat_id, text)
+            await asyncio.sleep(delay)
+        except Exception as e:
+            await asyncio.sleep(1)
+
+async def slide_loop(bot, chat_id, base):
+    """Slide spam with RAID TEXTS"""
+    i = 0
+    while True:
+        try:
+            text = f"{base} {RAID_TEXTS[i % len(RAID_TEXTS)]}"
+            await bot.send_message(chat_id, text)
+            i += 1
+            await asyncio.sleep(delay)
+        except Exception as e:
+            await asyncio.sleep(1)
+
+# ==================== COMMANDS ====================
+async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        f" **🩷ꜱꜱʏᴄʜᴏ ɢᴀᴡᴅ ᴛɢ ᴛᴏᴏʟ 🩷**\n"
+        f"🩵ʙᴏᴛꜱ🩵: {len(bots)}\n"
+        f"🤍ꜱᴘᴇᴇᴅ🤍: {delay}s\n"
+        f"🖤ꜱᴜᴅᴏ🖤: {len(SUDO_USERS)}\n\n"
+        f"❤️Use /help for commands♥️",
+        parse_mode='Markdown'
+    )
+
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        
+"🩷Kenshin*'! ʙᴀᴀᴘ ᴍᴇɴᴜ🩷 \n"
+"\n"
+"┃🤍ɴᴄ🤍\n"
+"┃ /nc <base>\n"
+"┃ /h <base>\n"
+"┃ /hcc <base>\n"
+"┃ /stop\n"
+"\n"
+"┃🩶ꜱᴘᴀᴍ🩶\n"
+"┃ /spam <text>\n"
+"┃ /stops\n"
+"\n"
+"┃🩵ꜱʟɪᴅᴇ🩵\n"
+"┃ /slide <base>\n"
+"┃ /stopslide\n"
+"\n"
+"┃💛ᴛᴀʀɢᴇᴛ💛\n"
+"┃ /aim\n"
+"┃ /hold\n"
+"\n"
+"┃🖤ᴄᴏɴᴛʀᴏʟꜱ🖤\n"
+"┃ /speed <sec>\n"
+"┃ /stat\n"
+"┃ /kill\n"
+"\n"
+"┃💜ꜱᴜᴅᴏ💜\n"
+"┃ /addsudo\n"
+"┃ /delsudo\n"
+"┃ /sudolist\n",
+
+        parse_mode='Markdown'
+    )
+
+# ==================== NC COMMANDS ====================
+@only_sudo
+async def nc_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """NC with RAID TEXTS"""
+    if not context.args:
+        return await update.message.reply_text("⚠️ Usage: `/nc <base>`", parse_mode='Markdown')
+
+    base = " ".join(context.args)
+    chat_id = update.message.chat_id
+
+    if chat_id in group_tasks:
+        for task in group_tasks[chat_id]:
+            task.cancel()
+
+    tasks = []
+    for bot in bots:
+        task = asyncio.create_task(nc_raid_loop(bot, chat_id, base))
+        tasks.append(task)
+
+    group_tasks[chat_id] = tasks
+    await update.message.reply_text(
+        f"🩷 **ɴᴄ ʀᴀɪᴅ ꜱᴛᴀʀᴛᴇᴅ** 🩷\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"💖 base: `{base}` 💖\n"
+        f"💛 Mode: Raid Texts 💛\n"
+        f"🤍 Bots: {len(bots)} 🤍",
+        parse_mode='Markdown'
+    )
+
+@only_sudo
+async def n_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """NC with HEART POOL"""
+    if not context.args:
+        return await update.message.reply_text("⚠️ Usage: `/h <base>`", parse_mode='Markdown')
+
+    base = " ".join(context.args)
+    chat_id = update.message.chat_id
+
+    if chat_id in group_tasks:
+        for task in group_tasks[chat_id]:
+            task.cancel()
+
+    tasks = []
+    for bot in bots:
+        task = asyncio.create_task(nc_emoji_loop(bot, chat_id, base))
+        tasks.append(task)
+
+    group_tasks[chat_id] = tasks
+    await update.message.reply_text(
+        f"🩷 **ɴᴄ ʜᴇᴀʀᴛ ꜱᴛᴀʀᴛꜱ** 🩷\n"
+        f"💖 Base: `{base}` 💖\n"
+        f"💙 Mode: HEART Pool 💙\n"
+        f"🧡 Bots: {len(bots)} 🧡",
+        parse_mode='Markdown'
+    )
+
+@only_sudo
+async def ncc_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """NC with RANDOM HEART + COUNTING"""
+    if not context.args:
+        return await update.message.reply_text("⚠️ Usage: `/hcc <base>`", parse_mode='Markdown')
+
+    base = " ".join(context.args)
+    chat_id = update.message.chat_id
+
+    if chat_id in group_tasks:
+        for task in group_tasks[chat_id]:
+            task.cancel()
+
+    tasks = []
+    for bot in bots:
+        task = asyncio.create_task(nc_count_loop(bot, chat_id, base))
+        tasks.append(task)
+
+    group_tasks[chat_id] = tasks
+    HEART = random.choice(HEART_POOL)
+
+    await update.message.reply_text(
+        f"🩷 **ɴᴄ ʜᴇᴀʀᴛ ᴄᴏᴜɴᴛ ꜱᴛᴀʀᴛꜱ** 🩷\n"
+        f"💖 Base: `{base}` 💖\n"
+        f"🤎 Heart: {HEART} 🤎\n"
+        f"❤️‍🔥 Mode: Counting (1,2,3....)❤️‍🔥\n"
+        f"❤️‍🩹 Bots: {len(bots)} ❤️‍🩹",
+        parse_mode='Markdown'
+    )
+
+@only_sudo
+async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Stop all NC"""
+    chat_id = update.message.chat_id
+
+    if chat_id in group_tasks:
+        for task in group_tasks[chat_id]:
+            task.cancel()
+        del group_tasks[chat_id]
+        await update.message.reply_text("**🌙 𝙉𝘾 𝙎𝙏𝙊𝙋𝙋𝙀𝘿 🩵**", parse_mode='Markdown')
+    else:
+        await update.message.reply_text("🌙 𝘾𝙃𝘼𝙇 𝘽𝙊𝙇 Kenshin*'! 𝘾𝙃𝘼𝘾𝙃𝘼 𝙊𝙋 🩵")
+
+# ==================== SPAM COMMANDS ====================
+@only_sudo
+async def spam_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        return await update.message.reply_text("⚠️ Usage: `/spam <text>`", parse_mode='Markdown')
+
+    text = " ".join(context.args)
+    chat_id = update.message.chat_id
+
+    if chat_id in spam_tasks:
+        for task in spam_tasks[chat_id]:
+            task.cancel()
+
+    tasks = []
+    for bot in bots:
+        task = asyncio.create_task(spam_loop(bot, chat_id, text))
+        tasks.append(task)
+
+    spam_tasks[chat_id] = tasks
+    await update.message.reply_text(
+        f"🤍 **ꜱᴘᴀᴍ ꜱᴛᴀʀᴛꜱ** 🤍\n"
+        f"❤️ Text: `{text}` ❤️",
+        parse_mode='Markdown'
+    )
+
+@only_sudo
+async def stops_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.message.chat_id
+
+    if chat_id in spam_tasks:
+        for task in spam_tasks[chat_id]:
+            task.cancel()
+        del spam_tasks[chat_id]
+        await update.message.reply_text("❤️ **𝗦𝗣𝗔𝗠 𝗦𝗧𝗢𝗣𝗣𝗘𝗗 ❤️**", parse_mode='Markdown')
+    else:
+        await update.message.reply_text("❤️‍🔥 𝗖𝗛𝗔𝗖𝗛𝗔 𝗡𝗛𝗜 𝗔𝗕𝗕  Kenshin*'! 𝗗𝗔𝗗𝗔 𝗢𝗣 𝗕𝗢𝗟 ❤️‍🔥")
+
+# ==================== SLIDE COMMANDS ====================
+@only_sudo
+async def slide_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Slide spam with base + RAID TEXTS"""
+    if not context.args:
+        return await update.message.reply_text("⚠️ Usage: `/slide <base>`", parse_mode='Markdown')
+
+    base = " ".join(context.args)
+    chat_id = update.message.chat_id
+
+    if chat_id in slide_tasks:
+        for task in slide_tasks[chat_id]:
+            task.cancel()
+
+    tasks = []
+    for bot in bots:
+        task = asyncio.create_task(slide_loop(bot, chat_id, base))
+        tasks.append(task)
+
+    slide_tasks[chat_id] = tasks
+    await update.message.reply_text(
+        f"🩷 **ꜱʟɪᴅᴇ ꜱᴘᴀᴍꜱ ꜱᴛᴀʀᴛꜱ** 🩷\n"
+        f"💖 Base: `{base}` 💖\n"
+        f"🤎 Mode: Raid Texts 🤎\n"
+        f"💚 Bots: {len(bots)} 💚",
+        parse_mode='Markdown'
+    )
+
+@only_sudo
+async def stopslide_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Stop slide spam"""
+    chat_id = update.message.chat_id
+
+    if chat_id in slide_tasks:
+        for task in slide_tasks[chat_id]:
+            task.cancel()
+        del slide_tasks[chat_id]
+        await update.message.reply_text("**💖 𝗦𝗟𝗜𝗗𝗘 𝗦𝗧𝗢𝗣𝗘𝗘𝗗 💖**", parse_mode='Markdown')
+    else:
+        await update.message.reply_text("🤍 𝗡𝗢 𝗔𝗖𝗧𝗜𝗩𝗘 𝗦𝗟𝗜𝗗𝗘 𝗛𝗘𝗥𝗘 🤍")
+
+# ==================== OLD TARGET COMMANDS ====================
+@only_sudo
+async def aim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.reply_to_message:
+        return await update.message.reply_text("⚠️ Reply to a user")
+
+    target_id = update.message.reply_to_message.from_user.id
+    slide_targets.add(target_id)
+    await update.message.reply_text(f"🎯 Target locked: `{target_id}`", parse_mode='Markdown')
+
+@only_sudo
+async def hold_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.reply_to_message:
+        return await update.message.reply_text("⚠️ Reply to a user")
+
+    target_id = update.message.reply_to_message.from_user.id
+    slide_targets.discard(target_id)
+    await update.message.reply_text(f"🛑 Target removed: `{target_id}`", parse_mode='Markdown')
+
+# ==================== CONTROL COMMANDS ====================
+@only_sudo
+async def speed_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global delay
+
+    if not context.args:
+        return await update.message.reply_text(f"⏱️ Current delay: `{delay}s`", parse_mode='Markdown')
+
+    try:
+        delay = max(0.01, float(context.args[0]))
+        await update.message.reply_text(
+            f"🤍 **ᴅᴇʟᴀʏ ꜱᴇᴛ** 🖤\n"
+
+            f"🖤 New delay: `{delay}s` 🤍",
+            parse_mode='Markdown'
+        )
+    except:
+        await update.message.reply_text("❌ Invalid number")
+
+@only_sudo
+async def stat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    nc_count = sum(len(tasks) for tasks in group_tasks.values())
+    spam_count = sum(len(tasks) for tasks in spam_tasks.values())
+    slide_count = sum(len(tasks) for tasks in slide_tasks.values())
+
+    await update.message.reply_text(
+        f"💖 **ʙᴏᴛ ꜱᴛᴀᴛᴜꜱ** 💖\n"
+        f"🤍 ʙᴏᴛꜱ: `{len(bots)}`\n"
+        f"🩵 ᴅᴇʟᴀʏ : `{delay}s`\n"
+        f"🩷 ꜱᴜᴅᴏ: `{len(SUDO_USERS)}`\n\n"
+        f"💛 **ᴀᴄᴛɪᴠᴇ ᴛᴀꜱᴋꜱ:** 💛\n"
+        f"• NC: `{nc_count}`\n"
+        f"• Spam: `{spam_count}`\n"
+        f"• Slide: `{slide_count}`\n"
+        f"• Old Targets: `{len(slide_targets)}`",
+        parse_mode='Markdown'
+    )
+
+@only_sudo
+async def kill_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    stopped = 0
+
+    for chat_tasks in group_tasks.values():
+        for task in chat_tasks:
+            task.cancel()
+            stopped += 1
+    group_tasks.clear()
+
+    for chat_tasks in spam_tasks.values():
+        for task in chat_tasks:
+            task.cancel()
+            stopped += 1
+    spam_tasks.clear()
+
+    for chat_tasks in slide_tasks.values():
+        for task in chat_tasks:
+            task.cancel()
+            stopped += 1
+    slide_tasks.clear()
+
+    slide_targets.clear()
+    slidespam_targets.clear()
+
+    await update.message.reply_text(
+        f" **ᴀʟʟ ᴋɪʟʟᴇᴅ**\n"
+        
+        f"ꜱᴛᴏᴘᴘᴇᴅ: `{stopped}` tasks",
+        parse_mode='Markdown'
+    )
+
+# ==================== SUDO MANAGEMENT ====================
+@only_owner
+async def addsudo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.reply_to_message:
+        return await update.message.reply_text("⚠️ Reply to a user")
+
+    uid = update.message.reply_to_message.from_user.id
+    SUDO_USERS.add(uid)
+    save_sudo()
+    await update.message.reply_text(f"🖤 **ꜱᴜᴅᴏ ᴀᴅᴅᴇᴅ** 💛\n👤 User: `{uid}` 🤍", parse_mode='Markdown')
+
+@only_owner
+async def delsudo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.reply_to_message:
+        return await update.message.reply_text("⚠️ Reply to a user")
+
+    uid = update.message.reply_to_message.from_user.id
+    if uid in SUDO_USERS:
+        SUDO_USERS.remove(uid)
+        save_sudo()
+        await update.message.reply_text(f"💛 **ꜱᴜᴅᴏ ʀᴇᴍᴏᴠᴇᴅ ** 🖤\n👤 User: `{uid}` 🤍", parse_mode='Markdown')
+    else:
+        await update.message.reply_text("❤️ ᴛʜɪꜱ ᴜꜱᴇʀ ɪꜱ ɴᴏᴛ ꜱᴜᴅᴏ ❤️")
+
+@only_sudo
+async def sudolist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    sudo_text = "**❤️‍🔥 ꜱᴜᴅᴏ ᴜꜱᴇʀꜱ 👑**\n━━━━━━━━━━━━━━━━━━\n\n"
+    for uid in SUDO_USERS:
+        role = "ᴏᴡɴᴇʀ 👑" if uid == OWNER_ID else "ꜱᴜᴅᴏ ❤️‍🔥"
+        sudo_text += f"{role} - `{uid}`\n"
+    await update.message.reply_text(sudo_text, parse_mode='Markdown')
+
+# ==================== AUTO REPLIES (OLD SYSTEM) ====================
+async def auto_replies(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.message.from_user.id
+
+    if uid in slide_targets:
+        for text in RAID_TEXTS[:3]:
+            await update.message.reply_text(text)
+            await asyncio.sleep(0.1)
+
+    if uid in slidespam_targets:
+        for text in RAID_TEXTS:
+            await update.message.reply_text(text)
+            await asyncio.sleep(0.05)
+
+# ==================== APP SETUP ====================
+def build_app(token):
+    app = Application.builder().token(token).concurrent_updates(True).build()
+
+    app.add_handler(CommandHandler("start", start_cmd))
+    app.add_handler(CommandHandler("help", help_cmd))
+
+    # NC commands
+    app.add_handler(CommandHandler("nc", nc_cmd))
+    app.add_handler(CommandHandler("h", n_cmd))
+    app.add_handler(CommandHandler("hcc", ncc_cmd))
+    app.add_handler(CommandHandler("stop", stop_cmd))
+
+    # Spam
+    app.add_handler(CommandHandler("spam", spam_cmd))
+    app.add_handler(CommandHandler("stops", stops_cmd))
+
+    # Slide
+    app.add_handler(CommandHandler("slide", slide_cmd))
+    app.add_handler(CommandHandler("stopslide", stopslide_cmd))
+
+    # Old target system
+    app.add_handler(CommandHandler("aim", aim_cmd))
+    app.add_handler(CommandHandler("hold", hold_cmd))
+
+    # Control
+    app.add_handler(CommandHandler("speed", speed_cmd))
+    app.add_handler(CommandHandler("stat", stat_cmd))
+    app.add_handler(CommandHandler("kill", kill_cmd))
+
+    # Sudo
+    app.add_handler(CommandHandler("addsudo", addsudo_cmd))
+    app.add_handler(CommandHandler("delsudo", delsudo_cmd))
+    app.add_handler(CommandHandler("sudolist", sudolist_cmd))
+
+    # Auto-promote handler
+    app.add_handler(ChatMemberHandler(auto_promote_bots, ChatMemberHandler.MY_CHAT_MEMBER))
+
+    # Auto replies
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, auto_replies))
+
+    return app
+
+async def run_all_bots():
+    global apps, bots
+
+    print("⚡ Initializing SSYCHO Bot...")
+    for token in TOKENS:
+        if token.strip():
+            try:
+                app = build_app(token)
+                apps.append(app)
+                bots.append(app.bot)
+            except Exception as e:
+                print(f"❌ Init error: {e}")
+
+    print(f"🚀 Starting {len(bots)} bots...")
+    for app in apps:
+        try:
+            await app.initialize()
+            await app.start()
+            await app.updater.start_polling(drop_pending_updates=True)
+        except Exception as e:
+            print(f"❌ Start error: {e}")
+
+    print(f"✅ {len(bots)} bots running!")
+    print(f"👑 Owner: {OWNER_ID}")
+    print(f"👥 Sudo: {len(SUDO_USERS)}")
+    print(f"⚡ Speed: {delay}s")
+    print(f"🔥 /nc - Raid texts")
+    print(f"🦋 /h - Emoji pool")
+    print(f"🔢 /hcc - Emoji + counting")
+    print(f"⚡ /slide <base> - Slide spam")
+    print(f"🛑 /stopslide - Stop slide")
+    print(f"🎉 Auto-promote enabled!")
+
+    await asyncio.Event().wait()
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(run_all_bots())
+    except KeyboardInterrupt:
+        print("\n🛑 Shutting down...")
+    except Exception as e:
+        print(f"❌ Error: {e}")
